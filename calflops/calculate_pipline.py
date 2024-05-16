@@ -29,6 +29,8 @@ from .utils import get_module_macs
 from .utils import macs_to_string
 from .utils import number_to_string
 from .utils import params_to_string
+from tabulate import tabulate
+from torch import nn
 
 DEFAULT_PRECISION = 2
 module_flop_count = []
@@ -94,6 +96,8 @@ class CalFlopsPipline(object):
                     module_flop_count.pop()
                     module.__macs__ += sum([elem[1] for elem in module_mac_count[-1]])
                     module_mac_count.pop()
+                    module.__input_shape__ = input[0].shape
+                    module.__output_shape__ = output[0].shape
 
             if not hasattr(module, "__post_hook_handle__"):
                 module.__post_hook_handle__ = module.register_forward_hook(post_hook)
@@ -377,8 +381,52 @@ class CalFlopsPipline(object):
             print(
                 "\nNote: 1. A module can have torch.nn.module or torch.nn.functional to compute logits (e.g. CrossEntropyLoss). \n They are not counted as submodules in calflops and not to be printed out. However they make up the difference between a parent's MACs and the sum of its submodules'.\n2. Number of floating-point operations is a theoretical estimation, thus FLOPS computed using that could be larger than the maximum system throughput.\n"
             )
-            print(self.model)
+
+            print_details_as_table(self.model)
 
         self.model.apply(del_extra_repr)
 
         print("---------------------------------------------------------------------------------------------------")
+
+
+def print_details_as_table(model):
+    """Prints the detailed calculated FLOPs results as a table.
+
+    Args:
+        model (nn.Module): The model to print the detailed calculated FLOPs results.
+    """
+    table = []
+    headers = ["Module", "Class", "Params", "MACs", "FLOPs", "Input Features", "Output Features", "Kernel Size", "Stride", "Padding", "Input Shape", "Output Shape"]
+    for name, module in model.named_modules():
+        if hasattr(module, "__flops__"):
+            row = [name, module.__class__.__name__, params_to_string(module.__params__), macs_to_string(module.__macs__), flops_to_string(module.__flops__)]
+            if isinstance(module, nn.Conv2d):
+                row.append(module.in_channels)
+                row.append(module.out_channels)
+                row.append(module.kernel_size)
+                row.append(module.stride)
+                row.append(module.padding)
+            elif isinstance(module, nn.Linear):
+                row.append("-")
+                row.append(module.in_features)
+                row.append(module.out_features)
+                row.append("-")
+                row.append("-")
+            else:
+                row.append("-")
+                row.append("-")
+                row.append("-")
+                row.append("-")
+                row.append("-")
+            if hasattr(module, "__input_shape__"):
+                row.append(tuple(module.__input_shape__))
+            else:
+                row.append("-")
+            if hasattr(module, "__output_shape__"):
+                row.append(tuple(module.__output_shape__))
+            else:
+                row.append("-")
+            table.append(row)
+    print(tabulate(table, headers, tablefmt="grid"))
+    print("---------------------------------------------------------------------------------------------------")
+    print("---------------------------------------------------------------------------------------------------")
